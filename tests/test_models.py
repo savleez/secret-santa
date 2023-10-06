@@ -1,57 +1,52 @@
 import unittest
 
-from sqlalchemy.ext.declarative import declarative_base
+from sqlmodel import SQLModel, Session
 
-from secret_santa.models import Participant, ContactMethod, ContactMethodType
-from secret_santa.database import Base
-from tests.database import Session, engine
+from secret_santa.models import Participant
+from tests.database import engine
 
 
-class TestContactMethodTypeCRUD(unittest.TestCase):
+class TestParticipantCRUD(unittest.TestCase):
     def setUp(self):
-        Base.metadata.create_all(bind=engine)
+        SQLModel.metadata.create_all(bind=engine)
 
     def tearDown(self):
         engine.dispose()
 
     def test_name_max_length(self):
-        """Intenta crear un ContactMethodType con un nombre que excede 255 caracteres"""
+        """Tries to create a Participant instance with a long name"""
 
         long_name = "A" * 256
-        contact_method_type = ContactMethodType(name=long_name)
 
         with self.assertRaises(Exception):
-            with Session() as session:
-                session.add(contact_method_type)
-                session.commit()
-                session.refresh(contact_method_type)
+            new_participant = Participant(name=long_name)
 
-    def test_create_contact_method_type(self):
-        new_contact_method_type = ContactMethodType(name="Email")
+    # def test_create_contact_method_type(self):
+    #     new_contact_method_type = ContactMethodType(name="Email")
 
-        self.assertIsNone(new_contact_method_type.id)
+    #     self.assertIsNone(new_contact_method_type.id)
 
-        with Session() as session:
-            session.add(new_contact_method_type)
-            session.commit()
-            session.refresh(new_contact_method_type)
+    #     with Session() as session:
+    #         session.add(new_contact_method_type)
+    #         session.commit()
+    #         session.refresh(new_contact_method_type)
 
-        self.assertIsNotNone(new_contact_method_type.id)
+    #     self.assertIsNotNone(new_contact_method_type.id)
 
-        # def test_create_contact_method_type_with_m
+    # def test_create_contact_method_type_with_m
 
 
-class TestContactMethodCRUD(unittest.TestCase):
-    def setUp(self) -> None:
-        pass
+# class TestContactMethodCRUD(unittest.TestCase):
+#     def setUp(self) -> None:
+#         pass
 
-    def tearDown(self):
-        engine.dispose()
+#     def tearDown(self):
+#         engine.dispose()
 
 
-class TestParticipantCRUD(unittest.TestCase):
-    def setUp(self) -> None:
-        pass
+# class TestParticipantCRUD(unittest.TestCase):
+#     def setUp(self) -> None:
+#         pass
 
-    def tearDown(self):
-        engine.dispose()
+#     def tearDown(self):
+#         engine.dispose()

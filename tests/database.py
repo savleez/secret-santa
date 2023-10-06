@@ -1,12 +1,6 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlmodel import create_engine
 
 DATABASE_URL = "sqlite:///:memory:"
-engine = create_engine(DATABASE_URL)
 
-Session = sessionmaker(
-    autocommit=False,
-    autoflush=False,
-    bind=engine,
-    expire_on_commit=False,
-)
+# SQLModel connection
+engine = create_engine(url=DATABASE_URL, echo=True)
