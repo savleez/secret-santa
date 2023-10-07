@@ -169,6 +169,7 @@ class TestParticipantCRUD(unittest.TestCase):
 
         # Create a new Participant
         participant = Participant(name=name)
+        self.assertIsNotNone(participant.name)
         self.assertIsNone(participant.id)
 
         with Session() as session:
@@ -182,13 +183,9 @@ class TestParticipantCRUD(unittest.TestCase):
 
     def test_read_participant(self):
         name = "John Doe"
-        recipient_name = "Jane Smith"
-        preferences = "No preferences"
 
         # Create a new Participant
-        participant = Participant(
-            name=name, recipient_name=recipient_name, preferences=preferences
-        )
+        participant = Participant(name=name)
 
         with Session() as session:
             session.add(participant)
@@ -202,8 +199,6 @@ class TestParticipantCRUD(unittest.TestCase):
         # Verify that the retrieved Participant matches the original one
         self.assertIsNotNone(retrieved_participant)
         self.assertEqual(retrieved_participant.name, name)
-        self.assertEqual(retrieved_participant.recipient_name, recipient_name)
-        self.assertEqual(retrieved_participant.preferences, preferences)
 
     def test_update_participant_name(self):
         initial_name = "John Doe"
@@ -227,27 +222,31 @@ class TestParticipantCRUD(unittest.TestCase):
         # Verify that the name has been updated correctly
         self.assertEqual(participant.name, updated_name)
 
-    def test_update_participant_recipient_name(self):
+    def test_update_participant_recipient(self):
         name = "John Doe"
         recipient_name = "John Smith"
 
         # Create a new Participant with the initial name
-        participant = Participant(name=name)
+        participant_1 = Participant(name=name)
+        participant_2 = Participant(name=recipient_name)
 
         with Session() as session:
-            session.add(participant)
+            session.add(participant_1)
+            session.add(participant_2)
             session.commit()
-            session.refresh(participant)
+            session.refresh(participant_1)
+            session.refresh(participant_2)
 
         # Update the name of the Participant
-        participant.recipient_name = recipient_name
+        participant_1.recipient_id = participant_2.id
 
         with Session() as session:
-            session.add(participant)
+            session.add(participant_1)
             session.commit()
+            session.refresh(participant_1)
 
         # Verify that the name has been updated correctly
-        self.assertEqual(participant.recipient_name, recipient_name)
+        self.assertEqual(participant_1.recipient_id, participant_2.id)
 
     def test_update_participant_preferences(self):
         name = "John Doe"
@@ -290,6 +289,38 @@ class TestParticipantCRUD(unittest.TestCase):
         with Session() as session:
             deleted_participant = session.query(Participant).get(participant.id)
             self.assertIsNone(deleted_participant)
+
+    def test_get_participant_recipient(self):
+        name = "John Doe"
+        recipient_name = "John Smith"
+
+        # Create a new Participant with the initial name
+        participant_1 = Participant(name=name)
+        participant_2 = Participant(name=recipient_name)
+
+        with Session() as session:
+            session.add(participant_1)
+            session.add(participant_2)
+            session.commit()
+            session.refresh(participant_1)
+            session.refresh(participant_2)
+
+        self.assertEqual(participant_1.name, name)
+        self.assertEqual(participant_2.name, recipient_name)
+        self.assertIsNotNone(participant_1.id)
+        self.assertIsNotNone(participant_2.id)
+
+        # Update the name of the Participant
+        participant_1.recipient_id = participant_2.id
+
+        with Session() as session:
+            session.add(participant_1)
+            session.commit()
+            session.refresh(participant_1)
+
+        with Session() as session:
+            participant_1 = session.query(Participant).get(participant_1.id)
+            self.assertEqual(participant_1.recipient, participant_2)
 
 
 class TestContactMethodCRUD(unittest.TestCase):

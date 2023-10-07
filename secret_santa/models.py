@@ -12,10 +12,24 @@ class Participant(Base):
 
     id = Column(Integer, primary_key=True)
     name = Column(String(255), unique=True, nullable=False)
-    recipient_name = Column(String(255), unique=False, nullable=True)
+    recipient_id = Column(
+        Integer,
+        ForeignKey("participants.id"),
+        unique=True,
+        nullable=True,
+    )
     preferences = Column(Text, nullable=True)
 
     contact_methods = relationship("ContactMethod", back_populates="participant")
+    recipient = relationship("Participant", remote_side=[id], uselist=False)
+
+    def __eq__(self, other):
+        return (
+            self.id == other.id
+            and self.name == other.name
+            and self.recipient_id == other.recipient_id
+            and self.preferences == other.preferences
+        )
 
 
 class ContactMethod(Base):
@@ -37,9 +51,20 @@ class ContactMethod(Base):
     participant = relationship(Participant, back_populates="contact_methods")
     method_type = relationship("ContactMethodType")
 
+    def __eq__(self, other):
+        return (
+            self.id == other.id
+            and self.participant_id == other.participant_id
+            and self.method_type_id == other.method_type_id
+            and self.value == other.value
+        )
+
 
 class ContactMethodType(Base):
     __tablename__ = "contact_method_types"
 
     id = Column(Integer, primary_key=True)
     name = Column(String(255), unique=True, nullable=False)
+
+    def __eq__(self, other):
+        return self.id == other.id and self.name == other.name
