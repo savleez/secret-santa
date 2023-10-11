@@ -22,6 +22,7 @@ from telegram.ext import (
 )
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm.attributes import InstrumentedAttribute
 
 
 from secret_santa.models import Participant
@@ -46,6 +47,7 @@ conv_enders = ["Adios", "adios", "Chao", "chao"]
 
 
 class KeyboardOptions(Enum):
+    GET_INFO = "Ver mi información"
     EDIT_NAME = "Editar mi nombre"
     EDIT_PREFS = "Editar mis preferencias"
     GET_RECIPIENT_NAME = "Consultar pareja"
@@ -71,6 +73,17 @@ def create_keyboard():
     return ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
 
 
+def get_participant_attribute(
+    chat_id: str, attr: InstrumentedAttribute, Session: Session
+):
+    with Session() as session:
+        participant_attr = (
+            session.query(attr).filter(Participant.chat_id == chat_id).first()
+        )
+
+    return participant_attr[0]
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /hola is issued."""
 
@@ -78,7 +91,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     Session = context.bot_data["session"]
 
     with Session() as session:
-        participant = session.query(Participant).filter_by(chat_id=chat_id).first()
+        participant = (
+            session.query(Participant).filter(Participant.chat_id == chat_id).first()
+        )
 
     if participant is None:
         await update.message.reply_text(
@@ -142,7 +157,7 @@ async def register_participant(
             pass
 
         await update.message.reply_text(
-            "Parece ser que ya alguien se registró con ese nombre"
+            "Parece ser que ya alguien se registró con ese nombre",
             reply_markup=ReplyKeyboardRemove(),
         )
         await update.message.reply_text(
@@ -155,6 +170,7 @@ async def register_participant(
     else:
         await update.message.reply_text(
             f"Muchas gracias, te acabo de registrar en el juego como {name}.",
+            reply_markup=ReplyKeyboardRemove(),
         )
 
         await update.message.reply_text(
@@ -190,23 +206,98 @@ async def choice_reply_handler(
     global conv_enders
 
     usr_response = update.message.text
-
+    context.bot_data["choice"] = usr_response
     # TODO: Crear las funciones de cada opcion
 
     if usr_response.lower() == "no" or usr_response in conv_enders:
         return await done(update, context)
 
-    elif usr_response == KeyboardOptions.EDIT_NAME.value:
-        context.bot_data["choice"] = KeyboardOptions.EDIT_NAME.value
-        await update.message.reply_text(
-            "Entiendo que quieres actualizar tu nombre actual en el juego"
+    elif usr_response == KeyboardOptions.GET_INFO.value:
+        current_name = get_participant_attribute(
+            chat_id=update.effective_chat.id,
+            attr=Participant.name,
+            Session=Session,
         )
-        await update.message.reply_text("¿Me puedes decir cuál es tu nombre?")
+        current_prefs = get_participant_attribute(
+            chat_id=update.effective_chat.id,
+            attr=Participant.preferences,
+            Session=Session,
+        )
+        await update.message.reply_text(
+            f"Actualmente tengo guardado que te llamas {current_name}",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+
+        if current_prefs is None or len(current_prefs) == 0:
+            await update.message.reply_text(
+                "Y actualmente no tienes preferencias guardadas.",
+                reply_markup=create_keyboard(),
+            )
+
+        else:
+            await update.message.reply_text(
+                "También tengo guardado que tus preferencias son:"
+                f'\n"{current_prefs}"',
+                reply_markup=create_keyboard(),
+            )
+
+    elif usr_response == KeyboardOptions.EDIT_NAME.value:
+        current_name = get_participant_attribute(
+            chat_id=update.effective_chat.id,
+            attr=Participant.name,
+            Session=Session,
+        )
+
+        await update.message.reply_text(
+            "Entiendo que quieres actualizar tu nombre actual en el juego",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        await update.message.reply_text(
+            f"Actualmente tengo registrado que tu nombre es: {current_name}",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        await update.message.reply_text(
+            "¿Me puedes decir cuál es tu nombre?",
+            reply_markup=ReplyKeyboardRemove(),
+        )
 
         return TYPING_REPLY
 
     elif usr_response == KeyboardOptions.EDIT_PREFS.value:
-        await update.message.reply_text("editar preferencias")
+        current_prefs = get_participant_attribute(
+            chat_id=update.effective_chat.id,
+            attr=Participant.preferences,
+            Session=Session,
+        )
+
+        await update.message.reply_text(
+            "Entiendo que quieres actualizar tus preferencias de regalo en el juego",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        await update.message.reply_text(
+            "En tus preferencias puedes indicar cosas como tu talla de ropa o de zapatos,"
+            "o si tienes alguna preferencia en particular que pueda interesar a la persona que te tiene",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+
+        if current_prefs is None or len(current_prefs) == 0:
+            await update.message.reply_text(
+                "Actualmente no tienes preferencias guardadas",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+
+        else:
+            await update.message.reply_text(
+                "Actualmente tus preferencias guardadas son:" f"\n{current_prefs}",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+
+        await update.message.reply_text(
+            "¿Me puedes decir cuáles son tus preferencias?",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+
+        return TYPING_REPLY
 
     elif usr_response == KeyboardOptions.GET_RECIPIENT_NAME.value:
         await update.message.reply_text("consultar nombre de pareja")
@@ -221,6 +312,17 @@ async def choice_reply_handler(
         await update.message.reply_text("terminar conversacion")
 
         return await done(update, context)
+
+    else:
+        await update.message.reply_text(
+            "Lo siento, no entiendo lo que dijiste"
+            "¿Puedes seleccionar una de las opciones disponibles?",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        await update.message.reply_text(
+            "También puedes decir /ayuda para ver las opciones disponibles",
+            reply_markup=create_keyboard(),
+        )
 
     return CHOOSING
 
@@ -250,10 +352,28 @@ async def process_typing_response(
 
             await update.message.reply_text(
                 f"Muchas gracias, acabo de actualizar tu nombre en el juego por {participant.name}.",
+                reply_markup=ReplyKeyboardRemove(),
             )
 
             await update.message.reply_text(
                 "¿Qué quieres hacer?",
+                reply_markup=create_keyboard(),
+            )
+
+            return CHOOSING
+
+        if choice == KeyboardOptions.EDIT_PREFS.value:
+            participant.preferences = usr_response
+            session.add(participant)
+            session.commit()
+
+            await update.message.reply_text(
+                f"Muchas gracias, acabo de actualizar tus preferencias.",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+
+            await update.message.reply_text(
+                "¿Quieres hacer algo más?",
                 reply_markup=create_keyboard(),
             )
 
@@ -301,7 +421,10 @@ async def delete_participant_command(
     """Send a message when the command /ayuda is issued."""
 
     # TODO: Mostrar lista de participantes como opciones y preguntar si está seguro
-    await update.message.reply_text("Eliminado!")
+    await update.message.reply_text(
+        "Eliminado!",
+        reply_markup=ReplyKeyboardRemove(),
+    )
 
 
 async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -309,9 +432,13 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     new_message = re_sub("[aeiouAEIOU]", "i", update.message.text)
 
-    await update.message.reply_text(new_message)
     await update.message.reply_text(
-        "Para iniciar una nueva conversación envía un mensaje diciendo: /hola"
+        new_message,
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    await update.message.reply_text(
+        "Para iniciar una nueva conversación envía un mensaje diciendo: /hola",
+        reply_markup=ReplyKeyboardRemove(),
     )
 
 

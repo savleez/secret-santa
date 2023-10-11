@@ -1,4 +1,8 @@
 import unittest
+from pathlib import Path
+import sys
+
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.exc import IntegrityError
