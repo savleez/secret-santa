@@ -1,11 +1,8 @@
-import logging
 from enum import Enum
-from os import getenv
-from re import sub as re_sub
-from typing import List
-
-# from secrets import choice
 from random import choice, shuffle
+from re import sub as re_sub
+from os import getenv
+from typing import List
 
 from dotenv import load_dotenv
 from telegram import (
@@ -21,41 +18,42 @@ from telegram.ext import (
     ConversationHandler,
     MessageHandler,
     filters,
-    CallbackContext,
 )
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm.attributes import InstrumentedAttribute
-
 
 from secret_santa.models import Participant
-from secret_santa.database import Base, Session, engine
+from secret_santa.database import Base
 
-# from tests.database import Session, engine
+TEST = True
+
+if TEST:
+    from tests.database import Session, engine
+else:
+    from secret_santa.database import Session, engine
+
 
 load_dotenv()
 TOKEN = getenv("TELEGRAM_TOKEN")
 
-# Enable logging
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
-# set higher logging level for httpx to avoid all GET and POST requests being logged
-logging.getLogger("httpx").setLevel(logging.WARNING)
-
-logger = logging.getLogger(__name__)
-
-# Bot
 (
     CHOOSING,
     TYPING_REPLY,
     TYPING_NAME,
     DELETE_PARTICIPANT,
-    START_GAME,
-    CONFIRM_YES_OR_NO,
-) = range(6)
+    CONFIRM_DELETE_PARTICIPANT,
+) = range(5)
 
-conv_enders = ["Adios", "adios", "Chao", "chao", "Cancelar", "cancelar"]
+conv_enders = [
+    "Adios",
+    "adios",
+    "Adiós",
+    "adiós",
+    "Chao",
+    "chao",
+    "Cancelar",
+    "cancelar",
+]
 
 GAME_RULES = """
 Este es un asistente para el juego de niño Jesús secreto.
@@ -76,12 +74,11 @@ que se le indique al bot.
 
 
 class KeyboardOptions(Enum):
-    GET_INFO = "Ver mi información"
-    EDIT_NAME = "Editar mi nombre"
-    EDIT_PREFS = "Editar mis preferencias"
-    GET_RECIPIENT_NAME = "Consultar pareja"
-    GET_RECIPIENT_PREFS = "Consultar preferencias de pareja"
-    INSTRUCTIONS = "Reglas del juego"
+    GET_PARTICIPANT = "Ver mi información"
+    GET_RECIPIENT = "Ver mi pareja"
+    EDIT_NAME = "Cambiar mi nombre"
+    EDIT_PREFS = "Cambiar mis preferencias"
+    INSTRUCTIONS = "Ver reglas del juego"
     CONV_END = conv_enders[0]
 
 
@@ -108,11 +105,40 @@ def create_keyboard(options: List[str | KeyboardOptions] = list(KeyboardOptions)
     return ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
 
 
-def get_participant(chat_id: str) -> Participant:
+def update_participant(new_participant: Participant) -> bool:
+    updated = False
+
     with Session() as session:
-        participant = (
-            session.query(Participant).filter(Participant.chat_id == chat_id).first()
-        )
+        try:
+            session.add(new_participant)
+            session.commit()
+
+            updated = True
+        except:
+            try:
+                session.rollback()
+            except:
+                pass
+
+    return updated
+
+
+def get_participant(chat_id: str = None, participant_name: str = None) -> Participant:
+    with Session() as session:
+        if chat_id:
+            participant = (
+                session.query(Participant)
+                .filter(Participant.chat_id == chat_id)
+                .first()
+            )
+        elif participant_name:
+            participant = (
+                session.query(Participant)
+                .filter(Participant.name == participant_name)
+                .first()
+            )
+        else:
+            return None
 
     return participant
 
@@ -130,6 +156,25 @@ def get_participant_recipient(participant: Participant) -> Participant:
     return recipient
 
 
+def get_participant_whose_recipient_is_participant(
+    participant: Participant,
+) -> Participant:
+    with Session() as session:
+        participant = (
+            session.query(Participant)
+            .filter(Participant.chat_id == participant.chat_id)
+            .first()
+        )
+
+        participant_whose_recipient_is_participant = (
+            session.query(Participant)
+            .filter(Participant.recipient_id == participant.id)
+            .first()
+        )
+
+        return participant_whose_recipient_is_participant
+
+
 def get_all_participants() -> List[Participant]:
     with Session() as session:
         participants = session.query(Participant).all()
@@ -143,17 +188,9 @@ def delete_participant(chat_id: str = None, participant_name: str = None):
     with Session() as session:
         try:
             if chat_id:
-                participant = (
-                    session.query(Participant)
-                    .filter(Participant.chat_id == chat_id)
-                    .first()
-                )
+                participant = get_participant(chat_id=chat_id)
             else:
-                participant = (
-                    session.query(Participant)
-                    .filter(Participant.name == participant_name)
-                    .first()
-                )
+                participant = get_participant(participant_name=participant_name)
 
             session.delete(participant)
             session.commit()
@@ -171,12 +208,7 @@ def delete_participant(chat_id: str = None, participant_name: str = None):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /hola is issued."""
 
-    chat_id = update.effective_chat.id
-
-    with Session() as session:
-        participant = (
-            session.query(Participant).filter(Participant.chat_id == chat_id).first()
-        )
+    participant = get_participant(update.effective_chat.id)
 
     if participant is None:
         await update.message.reply_text(
@@ -221,9 +253,9 @@ async def register_participant(
     try:
         with Session() as session:
             exists = (
-                session.query(Participant.name)
+                session.query(Participant)
                 .filter(func.lower(Participant.name) == name.lower())
-                .first()
+                .all()
             )
 
         if exists:
@@ -251,7 +283,7 @@ async def register_participant(
 
     else:
         await update.message.reply_text(
-            f"Muchas gracias, te acabo de registrar en el juego como {name}.",
+            f"Muchas gracias {name}, te acabo de registrar en el juego",
             reply_markup=ReplyKeyboardRemove(),
         )
 
@@ -270,128 +302,89 @@ async def choice_reply_handler(
 
     global conv_enders, GAME_RULES
 
-    usr_response = update.message.text
-    context.bot_data["choice"] = usr_response
+    user_choice = update.message.text
+    context.bot_data["choice"] = user_choice
 
-    if usr_response in conv_enders:
+    if user_choice in conv_enders:
         return await done(update, context)
 
     participant = get_participant(chat_id=update.effective_chat.id)
 
-    if usr_response == KeyboardOptions.GET_INFO.value:
+    preferences = (
+        f'tus preferencias son:\n"{participant.preferences}"'
+        if participant.preferences is not None and len(participant.preferences) > 0
+        else "todavía no tienes preferencias"
+    )
+
+    if user_choice == KeyboardOptions.GET_PARTICIPANT.value:
         await update.message.reply_text(
-            f"Actualmente tengo guardado que te llamas {participant.name}",
+            f"Te llamas {participant.name} y {preferences}",
             reply_markup=ReplyKeyboardRemove(),
         )
 
-        if participant.preferences is None or len(participant.preferences) == 0:
-            await update.message.reply_text(
-                "Y actualmente no tienes preferencias guardadas.",
-                reply_markup=ReplyKeyboardRemove(),
-            )
-
-        else:
-            await update.message.reply_text(
-                "También tengo guardado que tus preferencias son:"
-                f'\n"{participant.preferences}"',
-                reply_markup=ReplyKeyboardRemove(),
-            )
-
-    elif usr_response == KeyboardOptions.EDIT_NAME.value:
+    elif user_choice == KeyboardOptions.EDIT_NAME.value:
         await update.message.reply_text(
-            "Entiendo que quieres actualizar tu nombre actual en el juego",
-            reply_markup=ReplyKeyboardRemove(),
-        )
-        await update.message.reply_text(
-            f"Actualmente tengo registrado que tu nombre es: {participant.name}",
-            reply_markup=ReplyKeyboardRemove(),
-        )
-        await update.message.reply_text(
-            "¿Me puedes decir cuál es tu nombre?",
+            "¿Me puedes decir cuál es tu nuevo nombre?",
             reply_markup=ReplyKeyboardRemove(),
         )
 
         return TYPING_REPLY
 
-    elif usr_response == KeyboardOptions.EDIT_PREFS.value:
-        await update.message.reply_text(
-            "Entiendo que quieres actualizar tus preferencias de regalo en el juego",
-            reply_markup=ReplyKeyboardRemove(),
-        )
+    elif user_choice == KeyboardOptions.EDIT_PREFS.value:
         await update.message.reply_text(
             "En tus preferencias puedes indicar cosas como tu talla de ropa o de zapatos,"
-            "o si tienes alguna preferencia en particular que pueda interesar a la persona que te tiene",
+            "o si tienes alguna preferencia en particular que pueda interesar "
+            "a la persona que te tiene",
             reply_markup=ReplyKeyboardRemove(),
         )
 
-        if participant.preferences is None or len(participant.preferences) == 0:
-            await update.message.reply_text(
-                "Actualmente no tienes preferencias guardadas",
-                reply_markup=ReplyKeyboardRemove(),
-            )
-
-        else:
-            await update.message.reply_text(
-                "Actualmente tus preferencias guardadas son:"
-                f"\n{participant.preferences}",
-                reply_markup=ReplyKeyboardRemove(),
-            )
+        await update.message.reply_text(
+            preferences.capitalize(),
+            reply_markup=ReplyKeyboardRemove(),
+        )
 
         await update.message.reply_text(
-            "¿Me puedes decir cuáles son tus preferencias?",
+            "¿Me puedes decir cuáles son tus nuevas preferencias?",
             reply_markup=ReplyKeyboardRemove(),
         )
 
         return TYPING_REPLY
 
-    elif usr_response == KeyboardOptions.GET_RECIPIENT_NAME.value:
-        await update.message.reply_text(
-            "Entiendo que quieres consultar quién es tu pareja en el juego",
-            reply_markup=ReplyKeyboardRemove(),
-        )
-
+    elif user_choice == KeyboardOptions.GET_RECIPIENT.value:
         recipient = get_participant_recipient(participant=participant)
 
         if recipient is None:
             await update.message.reply_text(
-                "Pero todavía no se han asignado las parejas",
+                "Todavía no se han asignado las parejas",
                 reply_markup=ReplyKeyboardRemove(),
             )
 
         else:
+            preferences = (
+                f'sus preferencias son:\n"{recipient.preferences}"'
+                if recipient.preferences is not None and len(recipient.preferences) > 0
+                else "todavía no tiene preferencias"
+            )
+
             await update.message.reply_text(
-                f"Recuerda no decirle a nadie, tu pareja es: {recipient.name}",
+                "Recuerda no decirle a nadie 🤫",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            await update.message.reply_text(
+                f"Tu pareja es {recipient.name} y {preferences}",
                 reply_markup=ReplyKeyboardRemove(),
             )
 
-    elif usr_response == KeyboardOptions.GET_RECIPIENT_PREFS.value:
-        recipient = get_participant_recipient(participant=participant)
-
-        if recipient is None:
-            await update.message.reply_text(
-                "Pero todavía no se han asignado las parejas",
-                reply_markup=ReplyKeyboardRemove(),
-            )
-
-        else:
-            await update.message.reply_text(
-                f"Las preferencias de tu pareja son:\n{recipient.preferences}",
-                reply_markup=ReplyKeyboardRemove(),
-            )
-
-    elif usr_response == KeyboardOptions.INSTRUCTIONS.value:
+    elif user_choice == KeyboardOptions.INSTRUCTIONS.value:
         await update.message.reply_text(
             GAME_RULES,
             reply_markup=ReplyKeyboardRemove(),
         )
 
-    elif usr_response == KeyboardOptions.CONV_END.value:
-        return await done(update, context)
-
     else:
         await update.message.reply_text(
             "Lo siento, no entiendo lo que dijiste"
-            "\n¿Puedes seleccionar una de las opciones disponibles?",
+            "¿Puedes seleccionar una de las opciones disponibles?",
             reply_markup=ReplyKeyboardRemove(),
         )
         await update.message.reply_text(
@@ -407,31 +400,19 @@ async def choice_reply_handler(
     return CHOOSING
 
 
-async def yes_or_no_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def confirm_delete_participant(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
     """Send a message when the command /ayuda is issued."""
 
     global conv_enders
 
     usr_response = update.message.text
-    action = context.bot_data.get("action")
 
-    if usr_response in conv_enders or usr_response.lower() == "no":
+    if usr_response in conv_enders or usr_response.lower() != "si":
         return await done(update, context)
 
-    if action == "delete_participant":
-        return await delete_participant_handler(update, context)
-
-    elif action == "start_game":
-        return START_GAME
-
-    else:
-        await update.message.reply_text(
-            "Parece que hubo un error"
-            "\nSi quieres intentarlo de nuevo envía el comando nuevamente",
-            reply_markup=ReplyKeyboardRemove(),
-        )
-
-        return done(update, context)
+    return await delete_participant_handler(update, context)
 
 
 async def delete_participant_handler(
@@ -444,26 +425,38 @@ async def delete_participant_handler(
     usr_response = update.message.text
     participant_to_delete = context.bot_data.get("participant_to_delete")
 
-    if usr_response in conv_enders:
+    participants = get_all_participants()
+    names = [
+        participant.name for participant in participants if participant.name is not None
+    ]
+
+    if usr_response in conv_enders or (
+        usr_response not in names and usr_response.lower() not in ["si", "no"]
+    ):
         return await done(update, context)
 
     if not participant_to_delete:
         context.bot_data["participant_to_delete"] = usr_response
-        context.bot_data["action"] = "delete_participant"
 
         await update.message.reply_text(
             f"¿Seguro que quieres eliminar al participante {usr_response}?",
             reply_markup=create_keyboard(["Si", "No"]),
         )
 
-        return CONFIRM_YES_OR_NO
+        return CONFIRM_DELETE_PARTICIPANT
 
+    chat_id = get_participant(participant_name=participant_to_delete).chat_id
     deleted = delete_participant(participant_name=participant_to_delete)
 
     if deleted:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="Fuiste eliminado del juego, si tienes dudas por favor contacta a Maria Fernanda",
+        )
+
         await update.message.reply_text(
-            f"El participante {participant_to_delete} fue eliminado"
-            "\nSi se quiere registrar nuevamente deberá mandar /hola al bot",
+            f"El participante {participant_to_delete} fue eliminado. "
+            "Si se quiere registrar nuevamente deberá mandar /hola al bot",
             reply_markup=ReplyKeyboardRemove(),
         )
 
@@ -474,7 +467,7 @@ async def delete_participant_handler(
         )
 
 
-async def process_typing_response(
+async def typing_response_handler(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
     """Send a message when the command /ayuda is issued."""
@@ -483,74 +476,60 @@ async def process_typing_response(
     choice = context.bot_data["choice"]
     usr_response = update.message.text
 
-    with Session() as session:
-        participant = (
-            session.query(Participant).filter(Participant.chat_id == chat_id).first()
+    participant = get_participant(chat_id=chat_id)
+
+    updated_reply = "Muchas gracias {}, acabo de actualizar {} en el juego"
+
+    if choice == KeyboardOptions.EDIT_NAME.value:
+        participant.name = usr_response
+        update_participant(participant)
+
+        updated_reply = updated_reply.format(participant.name, "tu nombre")
+
+    elif choice == KeyboardOptions.EDIT_PREFS.value:
+        participant.preferences = usr_response
+        update_participant(participant)
+
+        updated_reply = updated_reply.format(participant.name, "tus preferencias")
+
+        participant_whose_recipient_is_participant = (
+            get_participant_whose_recipient_is_participant(participant)
         )
 
-        if not participant:
-            raise ValueError("No se encontró el participante a modificar")
-
-        if choice == KeyboardOptions.EDIT_NAME.value:
-            participant.name = usr_response
-            session.add(participant)
-            session.commit()
-
-            await update.message.reply_text(
-                f"Muchas gracias, acabo de actualizar tu nombre en el juego por {participant.name}.",
-                reply_markup=ReplyKeyboardRemove(),
+        if participant_whose_recipient_is_participant is not None:
+            await context.bot.send_message(
+                chat_id=participant_whose_recipient_is_participant.chat_id,
+                text=(
+                    "Tu pareja acaba de actualizar sus preferencias, "
+                    "puedes consultarlas diciendo /hola y luego en la opción de "
+                    "Ver mi pareja"
+                ),
             )
+    else:
+        updated_reply = (
+            "Disculpa, parece que hubo un pequeño error, "
+            "¿Puedes intentar otra vez por favor?"
+        )
 
-            await update.message.reply_text(
-                "¿Qué quieres hacer?",
-                reply_markup=create_keyboard(),
-            )
+    await update.message.reply_text(
+        updated_reply,
+        reply_markup=ReplyKeyboardRemove(),
+    )
 
-            return CHOOSING
+    await update.message.reply_text(
+        "¿Quieres hacer algo más?",
+        reply_markup=create_keyboard(),
+    )
 
-        if choice == KeyboardOptions.EDIT_PREFS.value:
-            participant.preferences = usr_response
-            session.add(participant)
-            session.commit()
-
-            await update.message.reply_text(
-                f"Muchas gracias, acabo de actualizar tus preferencias.",
-                reply_markup=ReplyKeyboardRemove(),
-            )
-
-            await update.message.reply_text(
-                "¿Quieres hacer algo más?",
-                reply_markup=create_keyboard(),
-            )
-
-            # if participant.recipient is not None:
-
-            return CHOOSING
+    return CHOOSING
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /ayuda is issued."""
 
     await update.message.reply_text(
-        "Help!",
-        reply_markup=ReplyKeyboardRemove(),
-    )
-
-
-async def instructions_command(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
-    """Send a message when the command /instrucciones is issued."""
-
-    global GAME_RULES
-
-    await update.message.reply_text(
-        GAME_RULES,
-        reply_markup=ReplyKeyboardRemove(),
-    )
-
-    await update.message.reply_text(
-        "Recuerda que puedes iniciar una nueva conversación enviando un mensaje diciendo: /hola",
+        "Si tienes dudas de cómo funciona este chat, "
+        "por favor contacta a Maria Fernanda 😄",
         reply_markup=ReplyKeyboardRemove(),
     )
 
@@ -560,24 +539,22 @@ async def start_game_command(
 ) -> None:
     """Send a message when the command /ayuda is issued."""
 
-    await update.message.reply_text(
-        "Inicio de juego!",
-        reply_markup=ReplyKeyboardRemove(),
-    )
-
+    clean_recipients()
     participants = get_all_participants()
 
-    if len(participants) < 2:
+    if len(participants) < 3:
         await update.message.reply_text(
-            "¡El juego no puede iniciar con menos de 3 personas!"
-            "Para consultar la lista de participantes envíe como mensaje /participantes",
+            "¡El juego no puede iniciar con menos de 3 personas! "
+            "Para consultar la lista de participantes envíe /participantes",
             reply_markup=ReplyKeyboardRemove(),
         )
 
         return await done(update, context)
 
-    if not all([isinstance(participant, Participant) for participant in participants]):
-        raise ValueError("The participants must be Person instances.")
+    await update.message.reply_text(
+        "Repartiendo las parejas...",
+        reply_markup=ReplyKeyboardRemove(),
+    )
 
     participants_copy = participants.copy()
     shuffle(participants_copy)
@@ -595,13 +572,48 @@ async def start_game_command(
 
         participants_copy.remove(possible_recipient)
 
-    # participants = get_all_participants()
-    # assert (
-    #     all([participant.recipient is not None for participant in participants]) == True
-    # )
+    if any(
+        [participant.recipient_id is None for participant in get_all_participants()]
+    ):
+        await update.message.reply_text(
+            "Hubo un error asignando las parejas, por favor intente eliminar "
+            "las parejas con /eliminar_parejas y repartirlas de nuevo con "
+            "/iniciar_juego",
+            reply_markup=ReplyKeyboardRemove(),
+        )
 
     await update.message.reply_text(
         "¡Se asignaron las parejas!",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+
+    for participant in get_all_participants():
+        await context.bot.send_message(
+            chat_id=participant.chat_id,
+            text=(
+                "Ya se te asignó una pareja, para consultar quién te tocó "
+                "inicia una conversación con /hola y pregúntame por tu pareja"
+            ),
+        )
+
+
+async def get_commands_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Send a message when the command /ayuda is issued."""
+
+    available_commands = (
+        "/hola o /start -> Iniciar conversación"
+        "\n/participantes -> Obtener lista de participantes"
+        "\n/eliminar_participante -> Eliminar un participante"
+        "\n/iniciar_juego -> Repartir las parejas"
+        "\n/eliminar_parejas -> Eliminar las parejas"
+        "\n/ayuda -> Mensaje de ayuda"
+        "\n/comandos -> Este menú con los comandos"
+    )
+
+    await update.message.reply_text(
+        available_commands,
         reply_markup=ReplyKeyboardRemove(),
     )
 
@@ -615,6 +627,45 @@ def update_participant_recipient(participant: Participant, recipient: Participan
         participant.recipient_id = recipient.id
         session.commit()
         session.refresh(participant)
+
+
+def clean_recipients():
+    for participant in get_all_participants():
+        participant.recipient_id = None
+        update_participant(participant)
+
+    if any(
+        [participant.recipient_id is not None for participant in get_all_participants()]
+    ):
+        raise ValueError("No se limpiaron todos las parejas")
+
+
+async def clean_recipients_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Send a message when the command /ayuda is issued."""
+
+    if len(get_all_participants()) == 1:
+        await update.message.reply_text(
+            f"Todavía no hay participantes",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return
+
+    try:
+        clean_recipients()
+
+        await update.message.reply_text(
+            f"Se limpiaron todas las parejas",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+
+    except:
+        await update.message.reply_text(
+            "Parece que ocurrió un error y no se limpiaron todos los participantes. "
+            "Por favor revisar manualmente",
+            reply_markup=ReplyKeyboardRemove(),
+        )
 
 
 async def get_all_participants_command(
@@ -635,14 +686,9 @@ async def get_all_participants_command(
 
     else:
         await update.message.reply_text(
-            f"De momento hay {len(names)} participantes: {', '.join(names)}",
+            f"Por ahora hay {len(names)} participantes: {', '.join(names)}",
             reply_markup=ReplyKeyboardRemove(),
         )
-
-    await update.message.reply_text(
-        "Recuerda que puedes registrarte e iniciar una nueva conversación enviando un mensaje diciendo: /hola",
-        reply_markup=ReplyKeyboardRemove(),
-    )
 
 
 async def delete_participant_command(
@@ -656,9 +702,16 @@ async def delete_participant_command(
         participant.name for participant in participants if participant.name is not None
     ]
 
+    if len(names) == 0:
+        await update.message.reply_text(
+            "Todavía no se han registrado participantes",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+
+        return
+
     await update.message.reply_text(
-        "Entiendo que quieres eliminar a uno de los participantes"
-        "\nPor favor selecciona el participante a eliminar",
+        "Por favor selecciona el participante a eliminar",
         reply_markup=create_keyboard(options=names),
     )
 
@@ -682,23 +735,27 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def main() -> None:
     """Start the bot."""
-    global TOKEN, engine, Base, reply_keyboard
+    global TOKEN, engine, Base, conv_enders
 
     Base.metadata.create_all(engine)
 
     # Create the Application and pass it your bot's token.
-    application = Application.builder().token(TOKEN).build()
-
-    context = CallbackContext(application, chat_id=None, user_id=None)
+    app = Application.builder().token(TOKEN).build()
 
     keyboard_options_reg = "|".join([option.value for option in list(KeyboardOptions)])
-    conv_enders_reg = "|".join(["Adios", "adios", "Chao", "chao"])
+    conv_enders_reg = "|".join(conv_enders)
 
-    # Add conversation handler with the states CHOOSING, TYPING_CHOICE and TYPING_REPLY
+    # Add main conversation handler with the states CHOOSING and TYPING_CHOICE
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler("hola", start),
             CommandHandler("start", start),
+            MessageHandler(
+                filters.TEXT
+                & ~(filters.COMMAND | filters.Regex(f"^{conv_enders_reg}$"))
+                & (filters.Regex("^(?i)hola$")),
+                start,
+            ),
         ],
         states={
             CHOOSING: [
@@ -713,7 +770,7 @@ def main() -> None:
                 MessageHandler(
                     filters.TEXT
                     & ~(filters.COMMAND | filters.Regex(f"^{conv_enders_reg}$")),
-                    process_typing_response,
+                    typing_response_handler,
                 )
             ],
             TYPING_NAME: [
@@ -728,18 +785,12 @@ def main() -> None:
         allow_reentry=True,
     )
 
+    # Add delete participant conversation handler
     conv_handler_delete_participant = ConversationHandler(
         entry_points=[
             CommandHandler("eliminar_participante", delete_participant_command)
         ],
         states={
-            CONFIRM_YES_OR_NO: [
-                MessageHandler(
-                    filters.TEXT
-                    & ~(filters.COMMAND | filters.Regex(f"^{conv_enders_reg}$")),
-                    yes_or_no_handler,
-                ),
-            ],
             DELETE_PARTICIPANT: [
                 MessageHandler(
                     filters.TEXT
@@ -747,19 +798,11 @@ def main() -> None:
                     delete_participant_handler,
                 ),
             ],
-        },
-        fallbacks=[MessageHandler(filters.Regex(f"^{conv_enders_reg}$"), done)],
-        allow_reentry=True,
-    )
-
-    conv_handler_start_game = ConversationHandler(
-        entry_points=[CommandHandler("iniciar_juego", start_game_command)],
-        states={
-            CONFIRM_YES_OR_NO: [
+            CONFIRM_DELETE_PARTICIPANT: [
                 MessageHandler(
                     filters.TEXT
                     & ~(filters.COMMAND | filters.Regex(f"^{conv_enders_reg}$")),
-                    delete_participant_handler,
+                    confirm_delete_participant,
                 ),
             ],
         },
@@ -767,16 +810,16 @@ def main() -> None:
         allow_reentry=True,
     )
 
-    application.add_handler(conv_handler)
-    application.add_handler(conv_handler_delete_participant)
-    application.add_handler(conv_handler_start_game)
+    app.add_handler(conv_handler)
+    app.add_handler(conv_handler_delete_participant)
 
-    application.add_handler(CommandHandler("instrucciones", instructions_command))
-    application.add_handler(
-        CommandHandler("participantes", get_all_participants_command)
-    )
-    application.add_handler(CommandHandler("ayuda", help_command))
-    application.add_handler(
+    app.add_handler(CommandHandler("participantes", get_all_participants_command))
+    app.add_handler(CommandHandler("iniciar_juego", start_game_command))
+    app.add_handler(CommandHandler("eliminar_parejas", clean_recipients_command))
+    app.add_handler(CommandHandler("ayuda", help_command))
+    app.add_handler(CommandHandler("comandos", get_commands_command))
+
+    app.add_handler(
         MessageHandler(
             filters.TEXT & ~(filters.COMMAND | filters.Regex(f"^{conv_enders_reg}$")),
             echo,
@@ -784,7 +827,7 @@ def main() -> None:
     )
 
     # Run the bot until the user presses Ctrl-C
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
