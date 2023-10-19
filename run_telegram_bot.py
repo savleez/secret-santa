@@ -1,13 +1,10 @@
-from enum import Enum
 from random import choice, shuffle
 from re import sub as re_sub
 from os import getenv
-from typing import List
+from threading import Thread
 
 from dotenv import load_dotenv
 from telegram import (
-    ReplyKeyboardMarkup,
-    KeyboardButton,
     ReplyKeyboardRemove,
     Update,
 )
@@ -79,6 +76,24 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
 
+def assign_recipients(participants) -> None:
+    participants_copy = participants.copy()
+    shuffle(participants_copy)
+
+    for participant in participants:
+        possible_recipient = participant
+
+        while possible_recipient == participant:
+            possible_recipient = choice(participants_copy)
+
+        models.update_participant_recipient(
+            participant=participant,
+            recipient=possible_recipient,
+        )
+
+        participants_copy.remove(possible_recipient)
+
+
 async def start_game_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -101,48 +116,48 @@ async def start_game_command(
         reply_markup=ReplyKeyboardRemove(),
     )
 
-    participants_copy = participants.copy()
-    shuffle(participants_copy)
+    try:
+        thread = Thread(target=assign_recipients, args=(participants,))
+        thread.start()
+        thread.join(60)  # -> Esperar máximo 60 segundos
 
-    for participant in participants:
-        possible_recipient = participant
+        if thread.is_alive():
+            thread._stop()
+            models.clean_recipients()
 
-        while possible_recipient == participant:
-            possible_recipient = choice(participants_copy)
+            raise ValueError("Timeout asignando las parejas.")
 
-        models.update_participant_recipient(
-            participant=participant,
-            recipient=possible_recipient,
-        )
+        if any(
+            [
+                participant.recipient_id is None
+                for participant in models.get_all_participants()
+            ]
+        ):
+            raise ValueError("No se asignaron todas las parejas")
 
-        participants_copy.remove(possible_recipient)
-
-    if any(
-        [
-            participant.recipient_id is None
-            for participant in models.get_all_participants()
-        ]
-    ):
+    except:
         await update.message.reply_text(
             "Hubo un error asignando las parejas, por favor intente eliminar "
             "las parejas con /eliminar_parejas y repartirlas de nuevo con "
             "/iniciar_juego",
             reply_markup=ReplyKeyboardRemove(),
         )
+        ConversationHandler.END
 
-    await update.message.reply_text(
-        "¡Se asignaron las parejas!",
-        reply_markup=ReplyKeyboardRemove(),
-    )
-
-    for participant in models.get_all_participants():
-        await context.bot.send_message(
-            chat_id=participant.chat_id,
-            text=(
-                "Ya se te asignó una pareja, para consultar quién te tocó "
-                "inicia una conversación con /hola y pregúntame por tu pareja"
-            ),
+    else:
+        await update.message.reply_text(
+            "¡Se asignaron las parejas!",
+            reply_markup=ReplyKeyboardRemove(),
         )
+
+        for participant in models.get_all_participants():
+            await context.bot.send_message(
+                chat_id=participant.chat_id,
+                text=(
+                    "Ya se te asignó una pareja, para consultar quién te tocó "
+                    "inicia una conversación con /hola y pregúntame por tu pareja"
+                ),
+            )
 
 
 async def get_commands_command(
@@ -306,7 +321,9 @@ async def choice_reply_handler(
     user_choice = update.message.text
     context.bot_data["choice"] = user_choice
 
-    if user_choice in settings.conv_enders:
+    participant = models.get_participant(chat_id=update.effective_chat.id)
+
+    if user_choice in settings.conv_enders or participant is None:
         return await done_command(update, context)
 
     participant = models.get_participant(chat_id=update.effective_chat.id)
@@ -442,8 +459,13 @@ async def delete_participant_handler(
 
         return settings.CONFIRM_DELETE_PARTICIPANT
 
-    chat_id = models.get_participant(participant_name=participant_to_delete).chat_id
-    deleted = models.delete_participant(participant_name=participant_to_delete)
+    try:
+        chat_id = models.get_participant(participant_name=participant_to_delete).chat_id
+        deleted = models.delete_participant(participant_name=participant_to_delete)
+    except:
+        deleted = False
+    finally:
+        context.bot_data["participant_to_delete"] = None
 
     if deleted:
         await context.bot.send_message(

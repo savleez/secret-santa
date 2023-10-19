@@ -30,3 +30,9 @@ class Participant(Base):
             and self.recipient_id == other.recipient_id
             and self.preferences == other.preferences
         )
+
+    def __str__(self):
+        return self.name
+
+    def __repr__(self):
+        return self.name

@@ -17,6 +17,7 @@ def update_participant(new_participant: Participant) -> bool:
 
             participant.name = new_participant.name
             participant.preferences = new_participant.preferences
+            participant.recipient_id = new_participant.recipient_id
 
             session.add(participant)
             session.commit()
