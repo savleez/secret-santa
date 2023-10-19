@@ -1,7 +1,7 @@
 from random import choice, shuffle
 from re import sub as re_sub
 from os import getenv
-from threading import Thread
+from multiprocessing import Process
 
 from dotenv import load_dotenv
 from telegram import (
@@ -117,12 +117,12 @@ async def start_game_command(
     )
 
     try:
-        thread = Thread(target=assign_recipients, args=(participants,))
-        thread.start()
-        thread.join(60)  # -> Esperar máximo 60 segundos
+        process = Process(target=assign_recipients, args=(participants,))
+        process.start()
+        process.join(60)  # -> Esperar máximo 60 segundos
 
-        if thread.is_alive():
-            thread._stop()
+        if process.is_alive():
+            process.terminate()
             models.clean_recipients()
 
             raise ValueError("Timeout asignando las parejas.")
