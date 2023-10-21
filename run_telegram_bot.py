@@ -78,13 +78,34 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 def assign_recipients(participants) -> None:
     participants_copy = participants.copy()
-    shuffle(participants_copy)
+    shuffle(participants)
 
     for participant in participants:
         possible_recipient = participant
 
         while possible_recipient == participant:
             possible_recipient = choice(participants_copy)
+
+            # Add restriction to avoid Valen to be paired with Sergio Vargas
+            # Valen -> 1749651542
+            # Sergio Velez -> 5556702448
+            # Sergio Vargas ->
+            # Mafe -> 1310291616
+            participant_is_valen = int(participant.chat_id) == 1310291616
+            recipient_is_valen = int(possible_recipient.chat_id) == 1310291616
+            participant_is_sergio = (
+                "sergio" in participant.name.lower()
+                and int(participant.chat_id) != 5556702448
+            )
+            recipient_is_sergio = (
+                "sergio" in possible_recipient.name.lower()
+                and int(possible_recipient.chat_id) != 5556702448
+            )
+
+            if (participant_is_valen and recipient_is_sergio) or (
+                participant_is_sergio and recipient_is_valen
+            ):
+                possible_recipient = participant
 
         models.update_participant_recipient(
             participant=participant,
@@ -102,9 +123,9 @@ async def start_game_command(
     models.clean_recipients()
     participants = models.get_all_participants()
 
-    if len(participants) < 3:
+    if len(participants) < 4:
         await update.message.reply_text(
-            "¡El juego no puede iniciar con menos de 3 personas! "
+            "¡El juego no puede iniciar con menos de 4 personas! "
             "Para consultar la lista de participantes envíe /participantes",
             reply_markup=ReplyKeyboardRemove(),
         )
@@ -462,6 +483,7 @@ async def delete_participant_handler(
     try:
         chat_id = models.get_participant(participant_name=participant_to_delete).chat_id
         deleted = models.delete_participant(participant_name=participant_to_delete)
+        models.clean_recipients()
     except:
         deleted = False
     finally:
@@ -655,7 +677,7 @@ def main() -> None:
 
     # Run the bot until the user presses Ctrl-C
     print("App started")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling(allowed_updates=Update.ALL_TYPES, timeout=120)
 
 
 if __name__ == "__main__":
