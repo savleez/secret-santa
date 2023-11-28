@@ -23,7 +23,7 @@ from telegram_bot import settings
 from telegram_bot import models
 from telegram_bot.utils import create_keyboard
 from secret_santa.models import Participant
-from secret_santa.database import Session, engine, Base
+from secret_santa.database import Session, engine, Base, DATABASE_URL
 
 
 load_dotenv()
@@ -91,8 +91,8 @@ def assign_recipients(participants) -> None:
             # Sergio Velez -> 5556702448
             # Sergio Vargas ->
             # Mafe -> 1310291616
-            participant_is_valen = int(participant.chat_id) == 1310291616
-            recipient_is_valen = int(possible_recipient.chat_id) == 1310291616
+            participant_is_valen = int(participant.chat_id) == 1749651542
+            recipient_is_valen = int(possible_recipient.chat_id) == 1749651542
             participant_is_sergio = (
                 "sergio" in participant.name.lower()
                 and int(participant.chat_id) != 5556702448
@@ -580,6 +580,18 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def get_database_path(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Send a message when the command /ayuda is issued."""
+
+
+    await update.message.reply_text(
+        f"La base de datos está ubicada en: {DATABASE_URL}",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+
+
 def main() -> None:
     """Start the bot."""
     global TOKEN
@@ -667,6 +679,7 @@ def main() -> None:
     app.add_handler(CommandHandler("eliminar_parejas", clean_recipients_command))
     app.add_handler(CommandHandler("ayuda", help_command))
     app.add_handler(CommandHandler("comandos", get_commands_command))
+    app.add_handler(CommandHandler("get_database", get_database_path))
 
     app.add_handler(
         MessageHandler(

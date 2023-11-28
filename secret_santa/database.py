@@ -9,7 +9,8 @@ load_dotenv()
 
 # Environment variables
 DATABASE_NAME = getenv("DATABASE_NAME")
-DATABASE_URL = f"sqlite:///{DATABASE_NAME}"
+# DATABASE_URL = f"sqlite:///{DATABASE_NAME}"
+DATABASE_URL = f"sqlite:////home/ubuntu/secret-santa/{DATABASE_NAME}"
 
 # SQLAlchemy
 engine = create_engine(
