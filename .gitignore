@@ -162,8 +162,10 @@ cython_debug/
 # VS Code
 .vscode/
 
-
 # DB
 *.sqlite
 *.sqlite3
 *.db
+
+# AWS
+*.pem
