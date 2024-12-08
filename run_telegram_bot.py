@@ -614,7 +614,7 @@ def main() -> None:
             MessageHandler(
                 filters.TEXT
                 & ~(filters.COMMAND | filters.Regex(f"^{conv_enders_reg}$"))
-                & (filters.Regex("^(?i)hola$")),
+                & (filters.Regex(r"(?i)^hola$")),
                 start_command,
             ),
         ],
